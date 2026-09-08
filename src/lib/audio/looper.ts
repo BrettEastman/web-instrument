@@ -22,6 +22,7 @@ function ensureRecorderModule(ctx: AudioContext): Promise<void> {
 
 export class Looper {
 	readonly gain: GainNode; // per-looper fader (patch: live.gain~[N])
+	readonly analyser: AnalyserNode; // post-fader meter tap
 	state: LooperState = 'empty';
 	speed = 1;
 	reversed = false;
@@ -43,7 +44,10 @@ export class Looper {
 		const ctx = getContext();
 		this.gain = ctx.createGain();
 		this.gain.gain.value = 0.8;
-		this.gain.connect(getMaster().busInput);
+		this.analyser = ctx.createAnalyser();
+		this.analyser.fftSize = 1024;
+		this.gain.connect(this.analyser);
+		this.analyser.connect(getMaster().busInput);
 	}
 
 	async startRecording(): Promise<void> {
@@ -144,6 +148,48 @@ export class Looper {
 		if (reversed === this.reversed) return;
 		this.reversed = reversed;
 		if (this.state === 'playing') this.play(); // restart on the flipped buffer
+	}
+
+	/**
+	 * Where the read head actually is right now — during a ramp this differs
+	 * from `speed` (the target). Lets the UI show the glide happening.
+	 */
+	get currentRate(): number {
+		return this.source ? this.source.playbackRate.value : this.speed;
+	}
+
+	// ---- scripted gestures (the patch's timed sig~ / line moves) ----------
+
+	/**
+	 * Grind to a halt over `ms` — the "slowing to a stop over 10 sec" cue.
+	 * playbackRate can't be exactly 0, so we land on a crawl that's inaudible.
+	 */
+	slowToStop(ms = 10000): void {
+		if (!this.source) return;
+		this.speed = 0.001;
+		ramp(this.source.playbackRate, 0.001, ms);
+	}
+
+	/**
+	 * The patch's "slowing in reverse" move: decelerate to near-zero, flip
+	 * direction, accelerate back up. Web Audio can't ramp playbackRate
+	 * through zero, so this fakes the crossing with a buffer swap at the
+	 * bottom of the deceleration — by then it's slow enough not to hear the seam.
+	 */
+	rampIntoReverse(ms = 4000): void {
+		if (!this.source) {
+			this.reversed = !this.reversed;
+			return;
+		}
+		const target = this.speed > 0.05 ? this.speed : 1;
+		ramp(this.source.playbackRate, 0.02, ms / 2);
+		window.setTimeout(() => {
+			if (this.state !== 'playing') return;
+			this.reversed = !this.reversed;
+			this.speed = 0.02;
+			this.play(); // restart on the flipped buffer at crawl speed
+			this.setSpeed(target, ms / 2); // ...and accelerate back out
+		}, ms / 2);
 	}
 
 	/** Waveform data for drawing (forward buffer, first channel). */

@@ -2,23 +2,19 @@
 	import { initEngine, type MasterChain } from '$lib/audio/engine';
 	import { startTestTone, startRiverPlaceholder, type Voice } from '$lib/audio/sources';
 	import { enableMic, type MicInput } from '$lib/audio/mic';
-	import { Looper, type LooperState } from '$lib/audio/looper';
+	import { Looper } from '$lib/audio/looper';
 	import Meter from '$lib/components/Meter.svelte';
 	import Fader from '$lib/components/Fader.svelte';
-	import Waveform from '$lib/components/Waveform.svelte';
+	import LooperUnit from '$lib/components/LooperUnit.svelte';
+
+	const LOOPER_COUNT = 3;
 
 	let master = $state<MasterChain | null>(null);
 	let tone = $state<Voice | null>(null);
 	let river = $state<Voice | null>(null);
 	let mic = $state<MicInput | null>(null);
 	let micError = $state('');
-
-	let looper = $state.raw<Looper | null>(null);
-	let looperState = $state<LooperState>('empty');
-	let looperDuration = $state(0);
-	let looperSpeed = $state(1);
-	let looperReversed = $state(false);
-	let waveform = $state<Float32Array | null>(null);
+	let loopers = $state.raw<Looper[]>([]);
 
 	async function begin() {
 		master = await initEngine();
@@ -46,57 +42,19 @@
 		micError = '';
 		try {
 			mic = await enableMic();
-			looper = new Looper(mic.source, 10);
+			// Different max lengths per looper, echoing the patch's
+			// 2555 / 4555 / 9555 ms buffers giving each loop its own scale.
+			const lengths = [4, 8, 12];
+			loopers = Array.from({ length: LOOPER_COUNT }, (_, i) => new Looper(mic!.source, lengths[i]));
 		} catch (e) {
 			micError = e instanceof Error ? e.message : String(e);
 		}
-	}
-
-	function syncLooper() {
-		if (!looper) return;
-		looperState = looper.state;
-		looperDuration = looper.duration;
-		waveform = looper.getWaveform();
-	}
-
-	async function recordToggle() {
-		if (!looper) return;
-		if (looper.state === 'recording') {
-			looper.stopRecording();
-		} else {
-			await looper.startRecording();
-			// Poll for the auto-stop at max length so the UI stays honest.
-			const poll = setInterval(() => {
-				if (looper && looper.state !== 'recording') {
-					clearInterval(poll);
-					syncLooper();
-				}
-			}, 200);
-		}
-		syncLooper();
-	}
-
-	function playToggle() {
-		if (!looper) return;
-		if (looper.state === 'playing') looper.stopPlayback();
-		else looper.play();
-		syncLooper();
-	}
-
-	function onSpeed(e: Event) {
-		looperSpeed = Number((e.target as HTMLInputElement).value);
-		looper?.setSpeed(looperSpeed, 100);
-	}
-
-	function toggleReverse() {
-		looperReversed = !looperReversed;
-		looper?.setReversed(looperReversed);
 	}
 </script>
 
 <main>
 	<h1>web instrument</h1>
-	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 1–2</p>
+	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 3</p>
 
 	{#if !master}
 		<button class="begin" onclick={begin}>Begin</button>
@@ -122,7 +80,7 @@
 		<section>
 			<h2>mic</h2>
 			{#if !mic}
-				<button onclick={onEnableMic}>enable mic</button>
+				<div class="row"><button onclick={onEnableMic}>enable mic</button></div>
 				{#if micError}<p class="error">{micError}</p>{/if}
 			{:else}
 				<Meter analyser={mic.analyser} label="input" />
@@ -131,32 +89,9 @@
 			{/if}
 		</section>
 
-		{#if mic && looper}
-			<section>
-				<h2>looper 1</h2>
-				<div class="row">
-					<button class:rec={looperState === 'recording'} onclick={recordToggle}>
-						{looperState === 'recording' ? 'stop rec' : 'record'}
-					</button>
-					<button disabled={looperState === 'empty' || looperState === 'recording'} onclick={playToggle}>
-						{looperState === 'playing' ? 'stop' : 'play loop'}
-					</button>
-					<button disabled={looperState === 'empty'} class:on={looperReversed} onclick={toggleReverse}>
-						reverse
-					</button>
-					{#if looperDuration > 0}
-						<span class="hint">{looperDuration.toFixed(2)} s</span>
-					{/if}
-				</div>
-				<Waveform samples={waveform} />
-				<label class="fader-row">
-					<span class="label">speed</span>
-					<input type="range" min="0.1" max="4" step="0.01" value={looperSpeed} oninput={onSpeed} />
-					<span class="value">{looperSpeed.toFixed(2)}×</span>
-				</label>
-				<Fader param={looper.gain.gain} label="level" initialDb={-2} />
-			</section>
-		{/if}
+		{#each loopers as looper, i (i)}
+			<LooperUnit {looper} index={i} />
+		{/each}
 	{/if}
 </main>
 
@@ -221,18 +156,6 @@
 	button:hover:not(:disabled) {
 		background: #2b3d48;
 	}
-	button:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
-	button.rec {
-		background: #5c2330;
-		border-color: #8a3547;
-	}
-	button.on {
-		background: #2c4a45;
-		border-color: #4a9d8f;
-	}
 	.begin {
 		align-self: flex-start;
 		font-size: 1.1rem;
@@ -248,26 +171,5 @@
 	.error {
 		color: #d1495b;
 		font-size: 0.8rem;
-	}
-	.fader-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-	.fader-row .label {
-		font-size: 0.7rem;
-		color: var(--dim);
-		min-width: 3.5rem;
-	}
-	.fader-row input {
-		flex: 1;
-		accent-color: #90bec6;
-	}
-	.fader-row .value {
-		font-size: 0.7rem;
-		color: var(--dim);
-		min-width: 4rem;
-		text-align: right;
-		font-variant-numeric: tabular-nums;
 	}
 </style>
