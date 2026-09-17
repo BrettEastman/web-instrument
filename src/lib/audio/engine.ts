@@ -3,17 +3,21 @@
  *
  * Signal flow (the Web Audio equivalent of the Max patch's main out):
  *
- *   everything -> busInput -> softclip (tanh~) -> masterGain (live.gain~) -> analyser (levelmeter~) -> speakers
+ *   everything -> busInput -> FX bus (EQ -> flanger -> reverb send)
+ *              -> softclip (tanh~) -> masterGain (live.gain~)
+ *              -> analyser (levelmeter~) -> speakers
  *
  * Browsers refuse to start audio without a user gesture, so nothing here
  * runs until initEngine() is called from a click handler ("Begin").
  */
+import { createFxBus, type FxBus } from './fx';
 
 let ctx: AudioContext | null = null;
 
 export interface MasterChain {
 	/** Connect every sound source to this node. */
 	busInput: GainNode;
+	fx: FxBus;
 	masterGain: GainNode;
 	analyser: AnalyserNode;
 }
@@ -47,6 +51,8 @@ export async function initEngine(): Promise<MasterChain> {
 	const busInput = ctx.createGain();
 	busInput.gain.value = 1;
 
+	const fx = createFxBus(ctx);
+
 	// tanh soft clipper — same idea as the patch's tanh~ compression stage.
 	// A WaveShaperNode maps every sample through a lookup curve.
 	const softclip = ctx.createWaveShaper();
@@ -59,12 +65,13 @@ export async function initEngine(): Promise<MasterChain> {
 	const analyser = ctx.createAnalyser();
 	analyser.fftSize = 2048;
 
-	busInput.connect(softclip);
+	busInput.connect(fx.input);
+	fx.output.connect(softclip);
 	softclip.connect(masterGain);
 	masterGain.connect(analyser);
 	analyser.connect(ctx.destination);
 
-	master = { busInput, masterGain, analyser };
+	master = { busInput, fx, masterGain, analyser };
 	return master;
 }
 

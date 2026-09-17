@@ -12,6 +12,7 @@
 	import LooperUnit from '$lib/components/LooperUnit.svelte';
 	import GranularUnit from '$lib/components/GranularUnit.svelte';
 	import CueDisplay from '$lib/components/CueDisplay.svelte';
+	import FxPanel from '$lib/components/FxPanel.svelte';
 
 	const LOOPER_COUNT = 3;
 
@@ -94,7 +95,7 @@
 
 <main>
 	<h1>web instrument</h1>
-	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 6</p>
+	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 7</p>
 
 	{#if !master}
 		<button class="begin" onclick={begin}>Begin</button>
@@ -105,6 +106,8 @@
 			<Fader param={master.masterGain.gain} label="out" initialDb={-6} />
 			<Meter analyser={master.analyser} label="main" />
 		</section>
+
+		<FxPanel fx={master.fx} />
 
 		<section>
 			<h2>sources</h2>
