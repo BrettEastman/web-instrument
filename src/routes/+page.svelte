@@ -2,12 +2,16 @@
 	import { initEngine, type MasterChain } from '$lib/audio/engine';
 	import { startTestTone, startRiverPlaceholder, type Voice } from '$lib/audio/sources';
 	import { enableMic, type MicInput } from '$lib/audio/mic';
+	import { ramp } from '$lib/audio/engine';
 	import { Looper } from '$lib/audio/looper';
 	import { Granular } from '$lib/audio/granular';
+	import { CueEngine } from '$lib/audio/cues';
+	import { buildDemoScore } from '$lib/audio/score';
 	import Meter from '$lib/components/Meter.svelte';
 	import Fader from '$lib/components/Fader.svelte';
 	import LooperUnit from '$lib/components/LooperUnit.svelte';
 	import GranularUnit from '$lib/components/GranularUnit.svelte';
+	import CueDisplay from '$lib/components/CueDisplay.svelte';
 
 	const LOOPER_COUNT = 3;
 
@@ -18,6 +22,36 @@
 	let micError = $state('');
 	let loopers = $state.raw<Looper[]>([]);
 	let granular = $state.raw<Granular | null>(null);
+	let cueEngine = $state.raw<CueEngine | null>(null);
+
+	// Environment layer for the score: the river placeholder, faded by cues.
+	function envUp(ms: number) {
+		if (!river) river = startRiverPlaceholder();
+		ramp(river.gain.gain, 0.5, ms);
+	}
+	function envDown(ms: number) {
+		if (river) ramp(river.gain.gain, 0, ms);
+	}
+
+	// Score keys (patch: keyboard cues, «Press "0" to go back to zero»).
+	$effect(() => {
+		if (!cueEngine) return;
+		const engine = cueEngine;
+		const onKey = (e: KeyboardEvent) => {
+			const t = e.target as HTMLElement | null;
+			if (t && ['INPUT', 'TEXTAREA', 'BUTTON'].includes(t.tagName)) return;
+			if (e.code === 'Space' || e.key === 'ArrowRight') {
+				e.preventDefault();
+				engine.next();
+			} else if (e.key === 'ArrowLeft') {
+				engine.prev();
+			} else if (e.key === '0') {
+				engine.reset();
+			}
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	});
 
 	async function begin() {
 		master = await initEngine();
@@ -51,6 +85,7 @@
 			loopers = Array.from({ length: LOOPER_COUNT }, (_, i) => new Looper(mic!.source, lengths[i]));
 			// The patch's grainrecord1 buffer was 25 s; same here.
 			granular = new Granular(mic.source, 25);
+			cueEngine = new CueEngine(buildDemoScore({ loopers, granular, env: { up: envUp, down: envDown } }));
 		} catch (e) {
 			micError = e instanceof Error ? e.message : String(e);
 		}
@@ -59,7 +94,7 @@
 
 <main>
 	<h1>web instrument</h1>
-	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 5</p>
+	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 6</p>
 
 	{#if !master}
 		<button class="begin" onclick={begin}>Begin</button>
@@ -93,6 +128,10 @@
 				<p class="hint">monitor is muted by default — headphones recommended before raising it</p>
 			{/if}
 		</section>
+
+		{#if cueEngine}
+			<CueDisplay engine={cueEngine} />
+		{/if}
 
 		{#each loopers as looper, i (i)}
 			<LooperUnit {looper} index={i} />
