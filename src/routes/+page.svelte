@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { initEngine, type MasterChain } from '$lib/audio/engine';
-	import { startTestTone, startRiverPlaceholder, type Voice } from '$lib/audio/sources';
+	import { startTestTone, type Voice } from '$lib/audio/sources';
 	import { enableMic, type MicInput } from '$lib/audio/mic';
 	import { ramp } from '$lib/audio/engine';
+	import { Soundscape } from '$lib/audio/soundscape';
 	import { Looper } from '$lib/audio/looper';
 	import { Granular } from '$lib/audio/granular';
 	import { CueEngine } from '$lib/audio/cues';
@@ -13,25 +14,31 @@
 	import GranularUnit from '$lib/components/GranularUnit.svelte';
 	import CueDisplay from '$lib/components/CueDisplay.svelte';
 	import FxPanel from '$lib/components/FxPanel.svelte';
+	import PulsePanel from '$lib/components/PulsePanel.svelte';
+	import SoundscapePanel from '$lib/components/SoundscapePanel.svelte';
 
 	const LOOPER_COUNT = 3;
 
 	let master = $state<MasterChain | null>(null);
 	let tone = $state<Voice | null>(null);
-	let river = $state<Voice | null>(null);
 	let mic = $state<MicInput | null>(null);
 	let micError = $state('');
 	let loopers = $state.raw<Looper[]>([]);
 	let granular = $state.raw<Granular | null>(null);
 	let cueEngine = $state.raw<CueEngine | null>(null);
+	let soundscape = $state.raw<Soundscape | null>(null);
 
-	// Environment layer for the score: the river placeholder, faded by cues.
+	function ensureSoundscape(): Soundscape {
+		if (!soundscape) soundscape = new Soundscape();
+		return soundscape;
+	}
+
+	// Environment layer for the score: the nodes soundscape, faded by cues.
 	function envUp(ms: number) {
-		if (!river) river = startRiverPlaceholder();
-		ramp(river.gain.gain, 0.5, ms);
+		ramp(ensureSoundscape().masterGain.gain, 0.6, ms);
 	}
 	function envDown(ms: number) {
-		if (river) ramp(river.gain.gain, 0, ms);
+		if (soundscape) ramp(soundscape.masterGain.gain, 0, ms);
 	}
 
 	// Score keys (patch: keyboard cues, «Press "0" to go back to zero»).
@@ -67,15 +74,6 @@
 		}
 	}
 
-	function toggleRiver() {
-		if (river) {
-			river.stop();
-			river = null;
-		} else {
-			river = startRiverPlaceholder();
-		}
-	}
-
 	async function onEnableMic() {
 		micError = '';
 		try {
@@ -95,7 +93,7 @@
 
 <main>
 	<h1>web instrument</h1>
-	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 7</p>
+	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 4 (complete set)</p>
 
 	{#if !master}
 		<button class="begin" onclick={begin}>Begin</button>
@@ -109,15 +107,13 @@
 
 		<FxPanel fx={master.fx} />
 
+		<SoundscapePanel {soundscape} oncreate={() => ensureSoundscape()} />
+
 		<section>
 			<h2>sources</h2>
 			<div class="row">
 				<button onclick={toggleTone}>{tone ? 'stop tone' : 'test tone'}</button>
-				<button onclick={toggleRiver}>{river ? 'stop river' : 'river (placeholder)'}</button>
 			</div>
-			{#if river}
-				<Fader param={river.gain.gain} label="river" initialDb={-6} />
-			{/if}
 		</section>
 
 		<section>
@@ -131,6 +127,8 @@
 				<p class="hint">monitor is muted by default — headphones recommended before raising it</p>
 			{/if}
 		</section>
+
+		<PulsePanel {granular} />
 
 		{#if cueEngine}
 			<CueDisplay engine={cueEngine} />
