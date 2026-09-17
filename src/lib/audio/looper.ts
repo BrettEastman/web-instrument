@@ -11,14 +11,9 @@
  * a good future milestone.)
  */
 import { getContext, getMaster, ramp } from './engine';
+import { BufferRecorder } from './recorder';
 
 export type LooperState = 'empty' | 'recording' | 'stopped' | 'playing';
-
-let workletReady: Promise<void> | null = null;
-function ensureRecorderModule(ctx: AudioContext): Promise<void> {
-	if (!workletReady) workletReady = ctx.audioWorklet.addModule('/worklets/recorder.js');
-	return workletReady;
-}
 
 export class Looper {
 	readonly gain: GainNode; // per-looper fader (patch: live.gain~[N])
@@ -29,19 +24,17 @@ export class Looper {
 	/** Duration of the recorded loop in seconds (0 when empty). */
 	duration = 0;
 
-	private worklet: AudioWorkletNode | null = null;
-	private pull: GainNode | null = null;
-	private chunks: Float32Array[][] = [];
-	private recordedFrames = 0;
+	private recorder: BufferRecorder;
 	private forward: AudioBuffer | null = null;
 	private reverse: AudioBuffer | null = null;
 	private source: AudioBufferSourceNode | null = null;
 
 	constructor(
-		private input: AudioNode,
+		input: AudioNode,
 		public readonly maxSeconds = 10
 	) {
 		const ctx = getContext();
+		this.recorder = new BufferRecorder(input, maxSeconds, () => this.stopRecording());
 		this.gain = ctx.createGain();
 		this.gain.gain.value = 0.8;
 		this.analyser = ctx.createAnalyser();
@@ -52,65 +45,20 @@ export class Looper {
 
 	async startRecording(): Promise<void> {
 		if (this.state === 'recording') return;
-		const ctx = getContext();
-		await ensureRecorderModule(ctx);
-
 		this.stopPlayback();
-		this.chunks = [];
-		this.recordedFrames = 0;
-
-		this.worklet = new AudioWorkletNode(ctx, 'recorder');
-		this.worklet.port.onmessage = (e: MessageEvent<Float32Array[]>) => {
-			this.chunks.push(e.data);
-			this.recordedFrames += e.data[0].length;
-			if (this.recordedFrames >= this.maxSeconds * ctx.sampleRate) {
-				this.stopRecording(); // auto-stop at the buffer limit, like record~ hitting loopend
-			}
-		};
-
-		// A worklet only processes while something downstream pulls it,
-		// so route its (unused) output through a muted gain to the destination.
-		this.pull = ctx.createGain();
-		this.pull.gain.value = 0;
-		this.input.connect(this.worklet);
-		this.worklet.connect(this.pull);
-		this.pull.connect(ctx.destination);
-
-		this.worklet.port.postMessage('start');
+		await this.recorder.start();
 		this.state = 'recording';
 	}
 
 	stopRecording(): void {
-		if (this.state !== 'recording' || !this.worklet) return;
-		const ctx = getContext();
-
-		this.worklet.port.postMessage('stop');
-		this.input.disconnect(this.worklet);
-		this.worklet.disconnect();
-		this.pull?.disconnect();
-		this.worklet = null;
-		this.pull = null;
-
-		if (this.recordedFrames === 0) {
+		if (this.state !== 'recording') return;
+		const buffer = this.recorder.stop();
+		if (!buffer) {
 			this.state = 'empty';
 			return;
 		}
-
-		// Stitch the 128-sample blocks into one AudioBuffer.
-		const channels = this.chunks[0].length;
-		const buffer = ctx.createBuffer(channels, this.recordedFrames, ctx.sampleRate);
-		for (let ch = 0; ch < channels; ch++) {
-			const data = buffer.getChannelData(ch);
-			let offset = 0;
-			for (const block of this.chunks) {
-				data.set(block[Math.min(ch, block.length - 1)], offset);
-				offset += block[0].length;
-			}
-		}
-		this.chunks = [];
-
 		this.forward = buffer;
-		this.reverse = reverseBuffer(ctx, buffer);
+		this.reverse = reverseBuffer(getContext(), buffer);
 		this.duration = buffer.duration;
 		this.state = 'stopped';
 	}

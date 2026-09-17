@@ -3,9 +3,11 @@
 	import { startTestTone, startRiverPlaceholder, type Voice } from '$lib/audio/sources';
 	import { enableMic, type MicInput } from '$lib/audio/mic';
 	import { Looper } from '$lib/audio/looper';
+	import { Granular } from '$lib/audio/granular';
 	import Meter from '$lib/components/Meter.svelte';
 	import Fader from '$lib/components/Fader.svelte';
 	import LooperUnit from '$lib/components/LooperUnit.svelte';
+	import GranularUnit from '$lib/components/GranularUnit.svelte';
 
 	const LOOPER_COUNT = 3;
 
@@ -15,6 +17,7 @@
 	let mic = $state<MicInput | null>(null);
 	let micError = $state('');
 	let loopers = $state.raw<Looper[]>([]);
+	let granular = $state.raw<Granular | null>(null);
 
 	async function begin() {
 		master = await initEngine();
@@ -46,6 +49,8 @@
 			// 2555 / 4555 / 9555 ms buffers giving each loop its own scale.
 			const lengths = [4, 8, 12];
 			loopers = Array.from({ length: LOOPER_COUNT }, (_, i) => new Looper(mic!.source, lengths[i]));
+			// The patch's grainrecord1 buffer was 25 s; same here.
+			granular = new Granular(mic.source, 25);
 		} catch (e) {
 			micError = e instanceof Error ? e.message : String(e);
 		}
@@ -54,7 +59,7 @@
 
 <main>
 	<h1>web instrument</h1>
-	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 3</p>
+	<p class="sub">a browser descendant of the pulse-flute Max patch — milestone 5</p>
 
 	{#if !master}
 		<button class="begin" onclick={begin}>Begin</button>
@@ -92,6 +97,10 @@
 		{#each loopers as looper, i (i)}
 			<LooperUnit {looper} index={i} />
 		{/each}
+
+		{#if granular}
+			<GranularUnit {granular} />
+		{/if}
 	{/if}
 </main>
 
