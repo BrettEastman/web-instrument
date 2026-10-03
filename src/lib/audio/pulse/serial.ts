@@ -107,15 +107,48 @@ export class SerialPulse implements PulseSource {
  * Pull a BPM out of one line of serial output. Formats handled:
  *   "BPM: 72", "BPM=72", "♥ A HeartBeat Happened! BPM: 72"  (PulseSensor Playground)
  *   "B72"                                                   (classic Amped sketch; S/Q lines ignored)
- *   "512,72,830"                                            (Serial Plotter CSV: signal,BPM,IBI)
+ *   "88,686,514" / "514,88,686"                             (Serial Plotter CSV, any field order)
  *   "72"                                                    (bare number, as the Max patch read it)
  */
 export function parseBpmLine(line: string): number | null {
+	if (line.includes(',')) return bpmFromCsv(line);
 	let match = line.match(/BPM\D{0,4}(\d{2,3})/i);
 	if (!match) match = line.match(/^B(\d{2,3})$/);
-	if (!match) match = line.match(/^\d+,(\d{2,3}),\d+$/);
 	if (!match) match = line.match(/^(\d{2,3})$/);
 	if (!match) return null;
-	const bpm = parseInt(match[1], 10);
+	return validBpm(parseInt(match[1], 10));
+}
+
+/**
+ * Serial Plotter CSV carries BPM, IBI (ms between beats) and the raw signal,
+ * but the field order differs between PulseSensor library versions
+ * (Brett's board sends BPM,IBI,signal). Rather than trust an order, find the
+ * pair that agrees with itself: BPM × IBI ≈ 60000. The library's BPM is a
+ * 10-beat average while IBI is the latest beat, so some slack is needed —
+ * but kept tight (±15%) because the raw signal (~300–700) can masquerade as
+ * an IBI. Rejecting an occasional honest line costs nothing at ~50 lines/s.
+ */
+function bpmFromCsv(line: string): number | null {
+	const labeled = line.match(/BPM\D{0,4}(\d{2,3})/i); // "Signal:512,BPM:90,IBI:666"
+	if (labeled) return validBpm(parseInt(labeled[1], 10));
+
+	const fields = line.split(',').map((f) => Number(f.trim()));
+	if (fields.some((n) => !Number.isFinite(n))) return null;
+
+	let best: { bpm: number; error: number } | null = null;
+	for (let b = 0; b < fields.length; b++) {
+		for (let i = 0; i < fields.length; i++) {
+			if (b === i) continue;
+			const bpm = fields[b];
+			const ibi = fields[i];
+			if (bpm < 30 || bpm > 220 || ibi < 270 || ibi > 2000) continue;
+			const error = Math.abs((bpm * ibi) / 60000 - 1);
+			if (error <= 0.15 && (!best || error < best.error)) best = { bpm, error };
+		}
+	}
+	return best ? Math.round(best.bpm) : null;
+}
+
+function validBpm(bpm: number): number | null {
 	return bpm >= 30 && bpm <= 220 ? bpm : null;
 }

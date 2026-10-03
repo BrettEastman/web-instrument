@@ -38,12 +38,29 @@
 		}
 	});
 
+	// Sources report as fast as they like (the Arduino ~50×/s); the project
+	// BPM samples the latest reading on a steady 500 ms clock, so the display,
+	// soundscape pad and grain pacing move at a calm, readable rate.
+	const BPM_SAMPLE_MS = 500;
+	let latestReading: number | null = null;
+
 	function onBpm(value: number) {
-		if (!frozen) pulseState.bpm = value;
+		latestReading = value;
 	}
+
+	$effect(() => {
+		const id = setInterval(() => {
+			if (!frozen && latestReading !== null) {
+				pulseState.bpm = latestReading;
+				latestReading = null; // consumed — a manual entry won't get overwritten by a stale reading
+			}
+		}, BPM_SAMPLE_MS);
+		return () => clearInterval(id);
+	});
 
 	async function activate(source: PulseSource) {
 		stopSource();
+		latestReading = null;
 		error = '';
 		try {
 			await source.start(onBpm);
@@ -154,7 +171,7 @@
 				{#if serialLineCount > 50 && serialBpmCount === 0}
 					<span class="warn">
 						data is arriving but no BPM found yet — if the text above looks garbled, the baud rate
-						doesn't match; if it reads like "512,0,0", the sensor hasn't detected a beat yet
+						doesn't match; if the BPM field reads 0, the sensor hasn't detected a beat yet
 						(check finger contact / THRESHOLD).
 					</span>
 				{/if}
