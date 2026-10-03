@@ -7,7 +7,7 @@
 	import { pulseState } from '$lib/stores/pulse-state.svelte';
 	import { TapPulse } from '$lib/audio/pulse/tap';
 	import { BleHeartRate } from '$lib/audio/pulse/ble';
-	import { SerialPulse } from '$lib/audio/pulse/serial';
+	import { SerialPulse, BAUD_RATES } from '$lib/audio/pulse/serial';
 	import type { Granular } from '$lib/audio/granular';
 
 	let { granular = null }: { granular?: Granular | null } = $props();
@@ -17,6 +17,12 @@
 	let error = $state('');
 	let active = $state.raw<PulseSource | null>(null);
 	let activeLabel = $state('');
+
+	// Serial diagnostics: what the board is actually sending.
+	let baudRate = $state(115200);
+	let serialLastLine = $state('');
+	let serialLineCount = $state(0);
+	let serialBpmCount = $state(0);
 
 	const bleAvailable = BleHeartRate.available();
 	const serialAvailable = SerialPulse.available();
@@ -32,12 +38,29 @@
 		}
 	});
 
+	// Sources report as fast as they like (the Arduino ~50×/s); the project
+	// BPM samples the latest reading on a steady 500 ms clock, so the display,
+	// soundscape pad and grain pacing move at a calm, readable rate.
+	const BPM_SAMPLE_MS = 500;
+	let latestReading: number | null = null;
+
 	function onBpm(value: number) {
-		if (!frozen) pulseState.bpm = value;
+		latestReading = value;
 	}
+
+	$effect(() => {
+		const id = setInterval(() => {
+			if (!frozen && latestReading !== null) {
+				pulseState.bpm = latestReading;
+				latestReading = null; // consumed — a manual entry won't get overwritten by a stale reading
+			}
+		}, BPM_SAMPLE_MS);
+		return () => clearInterval(id);
+	});
 
 	async function activate(source: PulseSource) {
 		stopSource();
+		latestReading = null;
 		error = '';
 		try {
 			await source.start(onBpm);
@@ -54,6 +77,33 @@
 		active?.stop();
 		active = null;
 		activeLabel = '';
+	}
+
+	function connectArduino() {
+		serialLastLine = '';
+		serialLineCount = 0;
+		serialBpmCount = 0;
+		const source = new SerialPulse({
+			baudRate,
+			onRaw: (line) => {
+				serialLastLine = line;
+				serialLineCount++;
+			},
+			onError: (message) => {
+				error = `Serial read stopped: ${message}`;
+			}
+		});
+		// Count successful parses separately so the UI can tell
+		// "no data" apart from "data, but no BPM in it".
+		void activate({
+			label: source.label,
+			start: (onBpmCb) =>
+				source.start((bpm) => {
+					serialBpmCount++;
+					onBpmCb(bpm);
+				}),
+			stop: () => source.stop()
+		});
 	}
 
 	/** The patch's "k": freeze the reading and let go of the sensor. */
@@ -97,15 +147,37 @@
 		<button
 			class:on={activeLabel === 'arduino (serial)'}
 			disabled={!serialAvailable}
-			onclick={() => activate(new SerialPulse())}
+			onclick={connectArduino}
 			title={serialAvailable ? '' : 'Web Serial needs a Chromium browser'}
 		>
 			arduino
 		</button>
+		<select bind:value={baudRate} disabled={!serialAvailable} title="Must match Serial.begin() in the sketch">
+			{#each BAUD_RATES as rate (rate)}<option value={rate}>{rate} baud</option>{/each}
+		</select>
 		{#if active}
 			<button class="freeze" onclick={freeze}>freeze</button>
 		{/if}
 	</div>
+
+	{#if activeLabel === 'arduino (serial)'}
+		<div class="serial-status">
+			{#if serialLineCount === 0}
+				<span class="hint">port open — waiting for data… (the Uno resets on connect; give it ~2 s)</span>
+			{:else}
+				<span class="hint">receiving:</span>
+				<code>{serialLastLine}</code>
+				<span class="hint">{serialLineCount} lines · {serialBpmCount} BPM readings</span>
+				{#if serialLineCount > 50 && serialBpmCount === 0}
+					<span class="warn">
+						data is arriving but no BPM found yet — if the text above looks garbled, the baud rate
+						doesn't match; if the BPM field reads 0, the sensor hasn't detected a beat yet
+						(check finger contact / THRESHOLD).
+					</span>
+				{/if}
+			{/if}
+		</div>
+	{/if}
 
 	{#if active instanceof TapPulse}
 		{@const tapSource = active}
@@ -253,6 +325,34 @@
 	.hint {
 		color: var(--dim);
 		font-size: 0.72rem;
+	}
+	select {
+		background: #2c1a22;
+		color: #e8e6e3;
+		border: 1px solid #4a2c3c;
+		border-radius: 6px;
+		padding: 0.35rem 0.4rem;
+		font-size: 0.78rem;
+	}
+	.serial-status {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+	.serial-status code {
+		font-size: 0.78rem;
+		background: #0e0a0c;
+		border: 1px solid #3a2230;
+		border-radius: 4px;
+		padding: 0.1rem 0.4rem;
+		color: #e8e6e3;
+		font-variant-numeric: tabular-nums;
+	}
+	.warn {
+		flex-basis: 100%;
+		color: #e2b04a;
+		font-size: 0.75rem;
 	}
 	.error {
 		color: #d1495b;

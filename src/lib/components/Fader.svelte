@@ -1,6 +1,7 @@
 <script lang="ts">
 	// A dB fader (patch: live.gain~, -70..+6 dB) driving a GainNode's
 	// AudioParam through the ramp() helper so moves are click-free.
+	import { untrack } from 'svelte';
 	import { dbToGain, ramp } from '$lib/audio/engine';
 
 	let {
@@ -17,7 +18,8 @@
 		max?: number;
 	} = $props();
 
-	let db = $state(initialDb);
+	// Starting position only; after that the fader owns its value.
+	let db = $state(untrack(() => initialDb));
 
 	function onInput(e: Event) {
 		db = Number((e.target as HTMLInputElement).value);
