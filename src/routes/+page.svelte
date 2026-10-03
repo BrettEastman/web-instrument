@@ -47,7 +47,7 @@
 		const engine = cueEngine;
 		const onKey = (e: KeyboardEvent) => {
 			const t = e.target as HTMLElement | null;
-			if (t && ['INPUT', 'TEXTAREA', 'BUTTON'].includes(t.tagName)) return;
+			if (t && ['INPUT', 'TEXTAREA', 'BUTTON', 'SELECT'].includes(t.tagName)) return;
 			if (e.code === 'Space' || e.key === 'ArrowRight') {
 				e.preventDefault();
 				engine.next();
